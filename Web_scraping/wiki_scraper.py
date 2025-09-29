@@ -50,6 +50,7 @@ def data_load(soup):
             "link": link
         })
     return movies
+
 if __name__ =="__main__":
     url = 'https://www.imdb.com/chart/top/'
     soup = scrape_page(url)
