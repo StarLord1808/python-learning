@@ -177,44 +177,71 @@ class IMDbScraperDDGS:
         return data
     
     def _extract_summary_synopsis(self, soup: BeautifulSoup) -> Dict:
-        """Extract summary and synopsis"""
+        """Extract full plot summary from /plotsummary page (not just main page)."""
         data = {}
         
         try:
-            # Summary
-            summary_selectors = [
-                'span[data-testid="plot-l"]',
-                '.summary_text',
-                '.plot_summary .summary_text'
-            ]
-            
-            for selector in summary_selectors:
-                summary_element = soup.select_one(selector)
-                if summary_element:
-                    summary_text = summary_element.get_text(strip=True)
-                    if summary_text and summary_text.lower() != 'add a plot':
-                        data['summary'] = summary_text
+            # 1. Try to get short summary from main page (fallback)
+            short_summary = None
+            for selector in ['span[data-testid="plot-xl"]', '.summary_text']:
+                elem = soup.select_one(selector)
+                if elem:
+                    text = elem.get_text(strip=True)
+                    if text and 'add a plot' not in text.lower():
+                        short_summary = text
                         break
-            
-            # Synopsis
-            synopsis_selectors = [
-                'div[data-testid="plot-xl"]',
-                '.plot-synopsis',
-                '.inline.canwrap p'
-            ]
-            
-            for selector in synopsis_selectors:
-                synopsis_element = soup.select_one(selector)
-                if synopsis_element:
-                    synopsis_text = synopsis_element.get_text(strip=True)
-                    if synopsis_text and synopsis_text.lower() != 'add a plot':
-                        data['synopsis'] = synopsis_text
-                        break
-            
-            # If no synopsis, use summary
-            if 'synopsis' not in data and 'summary' in data:
-                data['synopsis'] = data['summary']
+
+            # 2. Fetch full plot summary from /plotsummary page
+            if hasattr(self, 'imdb_id') and self.imdb_id:
+                plot_url = f"https://www.imdb.com/title/{self.imdb_id}/plotsummary/"
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                }
                 
+                try:
+                    import requests
+                    response = requests.get(plot_url, headers=headers, timeout=10)
+                    if response.status_code == 200:
+                        plot_soup = BeautifulSoup(response.text, 'html.parser')
+                        
+                        # The official plot summaries are in <li> inside <section> with no class,
+                        # but usually the FIRST <li> under a section is the "official" one.
+                        # Structure: <section><ul><li>...</li></ul></section>
+                        first_plot_li = plot_soup.select_one('section ul li')
+                        if first_plot_li:
+                            full_text = first_plot_li.get_text(strip=True)
+                            # Clean up extra whitespace
+                            full_text = ' '.join(full_text.split())
+                            if full_text and len(full_text) > 50:
+                                data['summary'] = full_text
+                                data['synopsis'] = full_text  # or expand later if needed
+                            else:
+                                # Fallback to short summary
+                                if short_summary:
+                                    data['summary'] = short_summary
+                                    data['synopsis'] = short_summary
+                        else:
+                            if short_summary:
+                                data['summary'] = short_summary
+                                data['synopsis'] = short_summary
+                    else:
+                        # Fallback if request fails
+                        if short_summary:
+                            data['summary'] = short_summary
+                            data['synopsis'] = short_summary
+
+                except Exception as e:
+                    print(f"⚠️ Failed to fetch /plotsummary: {e}")
+                    if short_summary:
+                        data['summary'] = short_summary
+                        data['synopsis'] = short_summary
+            else:
+                # No imdb_id? Just use short summary
+                if short_summary:
+                    data['summary'] = short_summary
+                    data['synopsis'] = short_summary
+
         except Exception as e:
             print(f"❌ Error extracting summary/synopsis: {e}")
         
@@ -283,50 +310,82 @@ class IMDbScraperDDGS:
         return data
     
     def _extract_storyline(self, soup: BeautifulSoup) -> Dict:
-        """Extract storyline information"""
+        """Extract storyline information from modern IMDb movie page."""
         data = {'storyline': {}}
         
         try:
-            # Plot summary
-            plot_selectors = [
-                'div[data-testid="storyline-plot-summary"]',
-                '.plot_summary_wrapper'
-            ]
-            
-            for selector in plot_selectors:
-                plot_element = soup.select_one(selector)
-                if plot_element:
-                    plot_text = plot_element.get_text(strip=True)
-                    if plot_text:
-                        data['storyline']['plot_summary'] = plot_text
-                        break
-            
-            # Genres
-            genre_elements = soup.find_all('a', href=re.compile(r'genres='))
+            # 1. Plot Summary (look for <span> or <div> with data-testid containing 'plot')
+            plot_element = soup.select_one('span[data-testid="plot-xl"], div[data-testid="plot-xl"]')
+            if not plot_element:
+                # Fallback: look for any prominent plot-like text near "Storyline" section
+                storyline_section = soup.find('section', {'data-testid': 'Storyline'})
+                if storyline_section:
+                    # Get first non-empty paragraph or span
+                    for elem in storyline_section.find_all(['span', 'div']):
+                        text = elem.get_text(strip=True)
+                        if text and len(text) > 30:  # reasonable plot length
+                            plot_element = elem
+                            break
+
+            if plot_element:
+                plot_text = plot_element.get_text(strip=True)
+                if plot_text and len(plot_text) > 10:
+                    data['storyline']['plot_summary'] = plot_text
+
+            # 2. Genres (modern layout: inside hero title block or storyline section)
+            genre_elements = soup.select('a[href*="/search/title/?genres="]')
+            if not genre_elements:
+                # Alternative: look for chips with data-testid containing 'genre'
+                genre_elements = soup.find_all('span', {'class': re.compile(r'.*chip.*')})
+                # But better: use explicit genre links
+                genre_elements = soup.select('div[data-testid="genres"] a')
+
             if genre_elements:
                 genres = []
                 for elem in genre_elements:
-                    genre_text = elem.get_text(strip=True)
-                    if genre_text and genre_text not in genres:
-                        genres.append(genre_text)
-                data['storyline']['genres'] = genres
-            
-            # Keywords
-            keyword_elements = soup.find_all('a', href=re.compile(r'keywords'))
-            if keyword_elements:
+                    text = elem.get_text(strip=True)
+                    if text and text not in genres:
+                        genres.append(text)
+                if genres:
+                    data['storyline']['genres'] = genres
+
+            # 3. Tagline (now often in a div with data-testid="storyline-2" or similar)
+            # Look for a line that starts with "Taglines:" or is labeled as such
+            tagline = None
+            # Method 1: Check storyline section for a line containing "Tagline"
+            storyline_items = soup.select('li[data-testid="storyline-2"]')
+            for item in storyline_items:
+                spans = item.find_all('span')
+                if len(spans) >= 2:
+                    label = spans[0].get_text(strip=True).lower()
+                    if 'tagline' in label:
+                        tagline = spans[1].get_text(strip=True)
+                        break
+
+            # Method 2: Fallback – look for any element with "Tagline:" in text
+            if not tagline:
+                for elem in soup.find_all('span', string=re.compile(r'Tagline', re.I)):
+                    next_elem = elem.find_next('span')
+                    if next_elem:
+                        tagline = next_elem.get_text(strip=True)
+                        break
+
+            if tagline:
+                data['storyline']['tagline'] = tagline
+
+            # 4. Keywords (now under "Storyline" > "Plot Keywords")
+            # They appear as links inside a list with data-testid="storyline-3"
+            keyword_section = soup.select_one('li[data-testid="storyline-3"]')
+            if keyword_section:
+                keyword_links = keyword_section.find_all('a')
                 keywords = []
-                for elem in keyword_elements:
-                    keyword_text = elem.get_text(strip=True)
-                    if keyword_text and keyword_text not in keywords:
-                        keywords.append(keyword_text)
-                data['storyline']['keywords'] = keywords
-            
-            # Tagline
-            tagline_element = soup.find('div', class_='txt-block')
-            if tagline_element and 'Tagline' in tagline_element.get_text():
-                tagline_text = tagline_element.get_text().replace('Tagline:', '').strip()
-                data['storyline']['tagline'] = tagline_text
-                
+                for link in keyword_links:
+                    kw = link.get_text(strip=True)
+                    if kw and kw not in keywords:
+                        keywords.append(kw)
+                if keywords:
+                    data['storyline']['keywords'] = keywords
+
         except Exception as e:
             print(f"❌ Error extracting storyline: {e}")
         
@@ -401,80 +460,137 @@ class IMDbScraperDDGS:
         return data
     
     def _extract_box_office(self, soup: BeautifulSoup) -> Dict:
-        """Extract box office information"""
+        """Extract box office information from modern IMDb movie page."""
         data = {'box_office': {}}
         
         try:
-            # Modern box office section
-            box_office_section = soup.find('div', {'data-testid': 'title-boxoffice'})
-            if box_office_section:
-                list_items = box_office_section.find_all('li', class_='ipc-metadata-list__item')
+            # 1. Try modern "Details" section (often contains budget/gross)
+            # Look for list items under a section with "Box office" or financial info
+            detail_sections = soup.find_all('li', {'data-testid': re.compile(r'title-details|boxoffice')})
+            
+            for item in detail_sections:
+                # Check if this item contains budget, gross, etc.
+                label_elem = item.find('span', {'class': re.compile(r'ipc-metadata-list-item__label')})
+                if not label_elem:
+                    continue
+                    
+                label = label_elem.get_text(strip=True)
+                value_elem = label_elem.find_next_sibling()
+                if not value_elem:
+                    # Try getting all text and removing label
+                    full_text = item.get_text(strip=True)
+                    value = full_text.replace(label, '').strip()
+                else:
+                    value = value_elem.get_text(strip=True)
                 
-                for item in list_items:
-                    try:
-                        label = item.find('span', class_='ipc-metadata-list-item__label')
-                        if label:
-                            key = label.get_text(strip=True).lower().replace(' ', '_')
-                            value = item.get_text().replace(label.get_text(), '').strip()
-                            data['box_office'][key] = value
-                    except:
-                        continue
-            
-            # Budget and gross from legacy format
-            budget_element = soup.find('h4', string='Budget:')
-            if budget_element:
-                budget_value = budget_element.find_next_sibling(string=True)
-                if budget_value:
-                    data['box_office']['budget'] = budget_value.strip()
-            
-            gross_element = soup.find('h4', string='Gross worldwide:')
-            if gross_element:
-                gross_value = gross_element.find_next_sibling(string=True)
-                if gross_value:
-                    data['box_office']['gross_worldwide'] = gross_value.strip()
-        
+                if not value:
+                    continue
+
+                # Normalize keys
+                key = label.lower()
+                if 'budget' in key:
+                    data['box_office']['budget'] = value
+                elif 'gross' in key and 'worldwide' in key:
+                    data['box_office']['gross_worldwide'] = value
+                elif 'opening weekend' in key:
+                    data['box_office']['opening_weekend_usa'] = value
+                elif 'gross usa' in key or 'gross us' in key:
+                    data['box_office']['gross_usa'] = value
+
+            # 2. Fallback: Legacy h4-based extraction (rare, but keep for old pages)
+            if not data['box_office']:
+                budget_element = soup.find('h4', string=re.compile(r'^Budget:$', re.I))
+                if budget_element:
+                    next_text = budget_element.next_sibling
+                    if next_text and isinstance(next_text, str):
+                        data['box_office']['budget'] = next_text.strip()
+                    else:
+                        # Try next element
+                        next_elem = budget_element.find_next(string=True)
+                        if next_elem:
+                            data['box_office']['budget'] = next_elem.strip()
+
+                gross_element = soup.find('h4', string=re.compile(r'^Gross worldwide:$', re.I))
+                if gross_element:
+                    next_text = gross_element.next_sibling
+                    if next_text and isinstance(next_text, str):
+                        data['box_office']['gross_worldwide'] = next_text.strip()
+                    else:
+                        next_elem = gross_element.find_next(string=True)
+                        if next_elem:
+                            data['box_office']['gross_worldwide'] = next_elem.strip()
+
         except Exception as e:
             print(f"❌ Error extracting box office: {e}")
         
         return data
     
     def _extract_tech_specs(self, soup: BeautifulSoup) -> Dict:
-        """Extract technical specifications"""
+        """Extract technical specifications from modern IMDb movie page."""
         data = {'technical_specs': {}}
         
         try:
-            # Modern tech specs section
-            tech_section = soup.find('div', {'data-testid': 'title-techspecs'})
-            if tech_section:
-                list_items = tech_section.find_all('li', class_='ipc-metadata-list__item')
+            # 1. Look in modern metadata sections (e.g., Details, Hero metadata)
+            # Runtime often appears in hero section
+            runtime_elem = soup.select_one('li[data-testid="title-techspec_runtime"]')
+            if runtime_elem:
+                value = runtime_elem.get_text(strip=True)
+                if value:
+                    data['technical_specs']['runtime'] = value
+
+            # Look for other tech specs in detail list items
+            detail_items = soup.select('li[data-testid^="title-details"], li[data-testid^="title-techspec"]')
+            for item in detail_items:
+                label_elem = item.select_one('span.ipc-metadata-list-item__label')
+                if not label_elem:
+                    continue
+                label = label_elem.get_text(strip=True)
+                # Get value: either next sibling or rest of item text
+                full_text = item.get_text(strip=True)
+                value = full_text.replace(label, '').strip()
                 
-                for item in list_items:
-                    try:
-                        label = item.find('span', class_='ipc-metadata-list-item__label')
-                        if label:
-                            key = label.get_text(strip=True).lower().replace(' ', '_').replace(':', '')
-                            value = item.get_text().replace(label.get_text(), '').strip()
-                            data['technical_specs'][key] = value
-                    except:
+                if not value:
+                    continue
+
+                # Normalize key
+                key = (
+                    label.lower()
+                    .replace(':', '')
+                    .replace(' ', '_')
+                    .replace('(', '')
+                    .replace(')', '')
+                    .replace('/', '_')
+                )
+
+                # Only keep relevant tech specs
+                if any(kw in key for kw in ['runtime', 'color', 'aspect', 'sound', 'camera', 'film']):
+                    data['technical_specs'][key] = value
+
+            # 2. Fallback: Legacy inline h4 elements (for older pages)
+            if not data['technical_specs']:
+                tech_elements = soup.find_all('h4', class_='inline')
+                for elem in tech_elements:
+                    label_text = elem.get_text(strip=True)
+                    next_text = elem.next_sibling
+                    if next_text and isinstance(next_text, str):
+                        value = next_text.strip()
+                    else:
+                        next_elem = elem.find_next(string=True)
+                        value = next_elem.strip() if next_elem else None
+
+                    if not value:
                         continue
-            
-            # Color, aspect ratio, sound mix from legacy format
-            tech_elements = soup.find_all('h4', class_='inline')
-            for element in tech_elements:
-                text = element.get_text(strip=True).lower()
-                if 'color' in text:
-                    color_value = element.find_next_sibling(string=True)
-                    if color_value:
-                        data['technical_specs']['color'] = color_value.strip()
-                elif 'aspect ratio' in text:
-                    ratio_value = element.find_next_sibling(string=True)
-                    if ratio_value:
-                        data['technical_specs']['aspect_ratio'] = ratio_value.strip()
-                elif 'sound mix' in text:
-                    sound_value = element.find_next_sibling(string=True)
-                    if sound_value:
-                        data['technical_specs']['sound_mix'] = sound_value.strip()
-        
+
+                    label_lower = label_text.lower()
+                    if 'color' in label_lower:
+                        data['technical_specs']['color'] = value
+                    elif 'aspect ratio' in label_lower:
+                        data['technical_specs']['aspect_ratio'] = value
+                    elif 'sound mix' in label_lower:
+                        data['technical_specs']['sound_mix'] = value
+                    elif 'runtime' in label_lower:
+                        data['technical_specs']['runtime'] = value
+
         except Exception as e:
             print(f"❌ Error extracting tech specs: {e}")
         
