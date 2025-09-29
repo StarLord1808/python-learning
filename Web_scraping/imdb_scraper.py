@@ -221,50 +221,62 @@ class IMDbScraperDDGS:
         return data
     
     def _extract_cast(self, soup: BeautifulSoup) -> Dict:
-        """Extract cast information"""
+        """Extract cast information from main IMDb movie page (modern layout)."""
         data = {'cast': []}
         
         try:
-            # Modern IMDb cast section
-            cast_section = soup.find('div', {'data-testid': 'title-cast'})
-            if cast_section:
-                cast_items = cast_section.find_all('a', {'data-testid': 'title-cast-item__actor'})
+            # Find the main cast list container (modern IMDb)
+            cast_list = soup.find('div', {'data-testid': 'title-cast-list'})
+            if not cast_list:
+                cast_list = soup.find('section', {'data-testid': 'title-cast'})  # fallback
+
+            if cast_list:
+                # Each actor card is in a list item or direct child
+                actor_links = cast_list.find_all('a', href=re.compile(r'/name/nm\d+/'))
                 
-                for item in cast_items[:20]:  # Limit to top 20
-                    actor_name = item.get_text(strip=True)
+                for link in actor_links[:20]:
+                    actor_name = link.get_text(strip=True)
+                    if not actor_name:
+                        continue
+
+                    # Character name is usually in the next sibling/child with specific testid
+                    character_elem = link.find_next('div', {'data-testid': re.compile(r'.*character.*')})
+                    if not character_elem:
+                        character_elem = link.find_next('span', string=re.compile(r'.'))
                     
-                    # Find character name
-                    character_span = item.find_next('span', {'data-testid': 'title-cast-item__character'})
-                    character_name = character_span.get_text(strip=True) if character_span else "Unknown"
-                    
+                    character_name = "Unknown"
+                    if character_elem:
+                        char_text = character_elem.get_text(strip=True)
+                        # Clean common IMDb artifacts like "as Tony Stark"
+                        char_text = re.sub(r'^(as\s+)?', '', char_text, flags=re.IGNORECASE)
+                        char_text = re.sub(r'\s*\([^)]*\)\s*', ' ', char_text)  # remove (credit only), etc.
+                        character_name = re.sub(r'\s+', ' ', char_text).strip() or "Unknown"
+
                     data['cast'].append({
                         'actor': actor_name,
                         'character': character_name
                     })
             else:
-                # Legacy IMDb cast table
+                # Fallback: try legacy table (rarely present in modern pages)
                 cast_table = soup.find('table', class_='cast_list')
                 if cast_table:
-                    cast_rows = cast_table.find_all('tr')[1:]  # Skip header
-                    for row in cast_rows[:20]:
+                    rows = cast_table.find_all('tr')[1:]
+                    for row in rows[:20]:
                         cells = row.find_all('td')
                         if len(cells) >= 4:
-                            actor_cell = cells[1]
-                            character_cell = cells[3]
-                            
-                            actor_link = actor_cell.find('a')
+                            actor_link = cells[1].find('a')
                             if actor_link:
                                 actor_name = actor_link.get_text(strip=True)
-                                character_name = character_cell.get_text(strip=True)
-                                
-                                # Clean character name
-                                character_name = re.sub(r'\s+', ' ', character_name).strip()
-                                
+                                char_cell = cells[3]
+                                # Remove annotations
+                                for span in char_cell.find_all('span'):
+                                    span.decompose()
+                                character_name = re.sub(r'\s+', ' ', char_cell.get_text(strip=True)) or "Unknown"
                                 data['cast'].append({
                                     'actor': actor_name,
                                     'character': character_name
                                 })
-        
+
         except Exception as e:
             print(f"❌ Error extracting cast: {e}")
         
@@ -668,8 +680,8 @@ if __name__ == "__main__":
         
         # Test movies
         test_movies = [
-            "Aquaman",
-            "Superman"
+            "The Dark Knight",
+            "F1"
         ]
         
         for movie in test_movies:
