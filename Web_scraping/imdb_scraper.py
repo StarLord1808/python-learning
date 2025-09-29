@@ -283,50 +283,82 @@ class IMDbScraperDDGS:
         return data
     
     def _extract_storyline(self, soup: BeautifulSoup) -> Dict:
-        """Extract storyline information"""
+        """Extract storyline information from modern IMDb movie page."""
         data = {'storyline': {}}
         
         try:
-            # Plot summary
-            plot_selectors = [
-                'div[data-testid="storyline-plot-summary"]',
-                '.plot_summary_wrapper'
-            ]
-            
-            for selector in plot_selectors:
-                plot_element = soup.select_one(selector)
-                if plot_element:
-                    plot_text = plot_element.get_text(strip=True)
-                    if plot_text:
-                        data['storyline']['plot_summary'] = plot_text
-                        break
-            
-            # Genres
-            genre_elements = soup.find_all('a', href=re.compile(r'genres='))
+            # 1. Plot Summary (look for <span> or <div> with data-testid containing 'plot')
+            plot_element = soup.select_one('span[data-testid="plot-xl"], div[data-testid="plot-xl"]')
+            if not plot_element:
+                # Fallback: look for any prominent plot-like text near "Storyline" section
+                storyline_section = soup.find('section', {'data-testid': 'Storyline'})
+                if storyline_section:
+                    # Get first non-empty paragraph or span
+                    for elem in storyline_section.find_all(['span', 'div']):
+                        text = elem.get_text(strip=True)
+                        if text and len(text) > 30:  # reasonable plot length
+                            plot_element = elem
+                            break
+
+            if plot_element:
+                plot_text = plot_element.get_text(strip=True)
+                if plot_text and len(plot_text) > 10:
+                    data['storyline']['plot_summary'] = plot_text
+
+            # 2. Genres (modern layout: inside hero title block or storyline section)
+            genre_elements = soup.select('a[href*="/search/title/?genres="]')
+            if not genre_elements:
+                # Alternative: look for chips with data-testid containing 'genre'
+                genre_elements = soup.find_all('span', {'class': re.compile(r'.*chip.*')})
+                # But better: use explicit genre links
+                genre_elements = soup.select('div[data-testid="genres"] a')
+
             if genre_elements:
                 genres = []
                 for elem in genre_elements:
-                    genre_text = elem.get_text(strip=True)
-                    if genre_text and genre_text not in genres:
-                        genres.append(genre_text)
-                data['storyline']['genres'] = genres
-            
-            # Keywords
-            keyword_elements = soup.find_all('a', href=re.compile(r'keywords'))
-            if keyword_elements:
+                    text = elem.get_text(strip=True)
+                    if text and text not in genres:
+                        genres.append(text)
+                if genres:
+                    data['storyline']['genres'] = genres
+
+            # 3. Tagline (now often in a div with data-testid="storyline-2" or similar)
+            # Look for a line that starts with "Taglines:" or is labeled as such
+            tagline = None
+            # Method 1: Check storyline section for a line containing "Tagline"
+            storyline_items = soup.select('li[data-testid="storyline-2"]')
+            for item in storyline_items:
+                spans = item.find_all('span')
+                if len(spans) >= 2:
+                    label = spans[0].get_text(strip=True).lower()
+                    if 'tagline' in label:
+                        tagline = spans[1].get_text(strip=True)
+                        break
+
+            # Method 2: Fallback – look for any element with "Tagline:" in text
+            if not tagline:
+                for elem in soup.find_all('span', string=re.compile(r'Tagline', re.I)):
+                    next_elem = elem.find_next('span')
+                    if next_elem:
+                        tagline = next_elem.get_text(strip=True)
+                        break
+
+            if tagline:
+                data['storyline']['tagline'] = tagline
+
+            # 4. Keywords (now under "Storyline" > "Plot Keywords")
+            # They appear as links inside a list with data-testid="storyline-3"
+            keyword_section = soup.select_one('li[data-testid="storyline-3"]')
+            if keyword_section:
+                keyword_links = keyword_section.find_all('a')
                 keywords = []
-                for elem in keyword_elements:
-                    keyword_text = elem.get_text(strip=True)
-                    if keyword_text and keyword_text not in keywords:
-                        keywords.append(keyword_text)
-                data['storyline']['keywords'] = keywords
-            
-            # Tagline
-            tagline_element = soup.find('div', class_='txt-block')
-            if tagline_element and 'Tagline' in tagline_element.get_text():
-                tagline_text = tagline_element.get_text().replace('Tagline:', '').strip()
-                data['storyline']['tagline'] = tagline_text
-                
+                for link in keyword_links:
+                    kw = link.get_text(strip=True)
+                    if kw and kw not in keywords:
+                        keywords.append(kw)
+                if keywords:
+                    data['storyline']['keywords'] = keywords
+
         except Exception as e:
             print(f"❌ Error extracting storyline: {e}")
         
