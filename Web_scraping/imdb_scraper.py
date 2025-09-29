@@ -1,3 +1,4 @@
+from ddgs import DDGS
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -6,458 +7,689 @@ import random
 import re
 import json
 from typing import List, Dict, Optional
-from urllib.parse import quote
+from urllib.parse import urljoin, urlparse
 
-class IMDbScraper:
+class IMDbScraperDDGS:
     def __init__(self):
+        self.ddgs = DDGS()
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'DNT': '1',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
         })
         self.base_url = "https://www.imdb.com"
     
-    def get_movie_id(self, movie_title: str) -> Optional[str]:
-        """Search for movie and return its IMDb ID with improved search"""
-        search_url = f"{self.base_url}/search/title"
-        params = {
-            'title': movie_title,
-            'title_type': 'feature',
-            'view': 'simple'
-        }
-        
+    def search_movie(self, movie_title: str) -> Optional[Dict]:
+        """Search for movie using DDGS and return movie information"""
         try:
-            response = self.session.get(search_url, params=params)
-            response.raise_for_status()
+            print(f"🔍 Searching for: {movie_title}")
             
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Look for search results
-            results = soup.find_all('div', class_='lister-item')
+            # Use DDGS text search
+            results = self.ddgs.text(
+                f"{movie_title} IMDb", 
+                max_results=5
+            )
             
             for result in results:
-                title_element = result.find('h3', class_='lister-item-header')
-                if title_element and title_element.a:
-                    movie_link = title_element.a.get('href', '')
-                    match = re.search(r'/title/(tt\d+)/', movie_link)
+                if 'imdb.com/title/tt' in result['href']:
+                    # Extract IMDb ID from URL
+                    match = re.search(r'imdb\.com/title/(tt\d+)', result['href'])
                     if match:
-                        return match.group(1)
+                        imdb_id = match.group(1)
+                        return {
+                            'imdb_id': imdb_id,
+                            'title': movie_title,
+                            'url': result['href'],
+                            'description': result['body'],
+                            'search_title': result['title']
+                        }
             
-            # Alternative search approach
-            return self._alternative_search(movie_title)
-                
-        except Exception as e:
-            print(f"Error searching for movie: {e}")
-            return self._alternative_search(movie_title)
-    
-    def _alternative_search(self, movie_title: str) -> Optional[str]:
-        """Alternative search method using different endpoint"""
-        search_url = f"{self.base_url}/find"
-        params = {
-            'q': movie_title,
-            's': 'tt',
-            'ttype': 'ft'
-        }
-        
-        try:
-            response = self.session.get(search_url, params=params)
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'html.parser')
-            
-            # Look for search results in find page
-            result = soup.find('td', class_='result_text')
-            if result and result.a:
-                movie_link = result.a.get('href', '')
-                match = re.search(r'/title/(tt\d+)/', movie_link)
-                if match:
-                    return match.group(1)
-            
+            print(f"❌ Movie '{movie_title}' not found in search results")
             return None
+            
         except Exception as e:
-            print(f"Alternative search failed: {e}")
+            print(f"❌ Error searching for movie: {e}")
             return None
     
-    def get_reviews(self, imdb_id: str, max_reviews: int = 50) -> List[Dict]:
-        """Extract reviews using multiple approaches"""
-        reviews = []
-        
-        # Try different review URL patterns
-        url_patterns = [
-            f"{self.base_url}/title/{imdb_id}/reviews",
-            f"{self.base_url}/title/{imdb_id}/reviews/_ajax",
-            f"{self.base_url}/title/{imdb_id}/reviews?ref_=tt_ov_rt",
-        ]
-        
-        for url in url_patterns:
-            if len(reviews) >= max_reviews:
-                break
-                
-            print(f"Trying URL: {url}")
-            page_reviews = self._scrape_reviews_from_url(url, max_reviews - len(reviews))
-            reviews.extend(page_reviews)
-            
-            if page_reviews:
-                print(f"Found {len(page_reviews)} reviews from this URL")
-                time.sleep(2)  # Be respectful with delays
-        
-        return reviews[:max_reviews]
-    
-    def _scrape_reviews_from_url(self, url: str, max_reviews: int) -> List[Dict]:
-        """Scrape reviews from a specific URL"""
-        reviews = []
-        
+    def get_movie_details(self, imdb_id: str) -> Dict:
+        """Extract comprehensive movie details from IMDb page"""
         try:
+            print(f"🎬 Fetching movie details for {imdb_id}...")
+            
+            # Main movie page
+            url = f"https://www.imdb.com/title/{imdb_id}/"
             response = self.session.get(url)
             response.raise_for_status()
             
-            # Save for debugging
-            with open("debug_current_page.html", "w", encoding="utf-8") as f:
-                f.write(response.text)
-            
             soup = BeautifulSoup(response.content, 'html.parser')
             
-            # Check if we got a valid page (not 404)
-            if soup.find('h1', string='404 Error'):
-                print("Got 404 error page")
-                return reviews
+            movie_data = {
+                'imdb_id': imdb_id,
+                'url': url,
+                'scraped_at': time.strftime('%Y-%m-%d %H:%M:%S')
+            }
             
-            # Multiple possible review container patterns
-            container_selectors = [
-                'div.review-container',
-                'div.lister-item',
-                'div.imdb-user-review',
-                'div[data-testid="review-container"]',
-                'div.ipc-page-grid__item',
-                'div.text.show-more__control'
-            ]
+            # 1. Extract Title and Basic Info
+            movie_data.update(self._extract_basic_info(soup))
             
-            for selector in container_selectors:
-                containers = soup.select(selector)
-                if containers:
-                    print(f"Found {len(containers)} containers with selector: {selector}")
-                    for container in containers:
-                        if len(reviews) >= max_reviews:
-                            break
-                        review = self._parse_review_advanced(container)
-                        if review:
-                            reviews.append(review)
-                    break
+            # 2. Extract Summary and Synopsis
+            movie_data.update(self._extract_summary_synopsis(soup))
             
-            # Also try to find review text directly
-            if not reviews:
-                review_texts = soup.find_all('div', class_='text show-more__control')
-                for i, text_div in enumerate(review_texts):
-                    if len(reviews) >= max_reviews:
-                        break
-                    review = {
-                        'type': 'user',
-                        'title': f'Review {i+1}',
-                        'content': text_div.get_text(strip=True),
-                        'rating': None,
-                        'author': 'Unknown',
-                        'date': 'Unknown',
-                        'helpful': 'Unknown',
-                    }
-                    reviews.append(review)
+            # 3. Extract Cast
+            movie_data.update(self._extract_cast(soup))
+            
+            # 4. Extract Storyline
+            movie_data.update(self._extract_storyline(soup))
+            
+            # 5. Extract Motion Picture Rating
+            movie_data.update(self._extract_ratings(soup))
+            
+            # 6. Extract Details (Genre, Release Date, etc.)
+            movie_data.update(self._extract_details(soup))
+            
+            # 7. Extract Box Office Information
+            movie_data.update(self._extract_box_office(soup))
+            
+            # 8. Extract Technical Specifications
+            movie_data.update(self._extract_tech_specs(soup))
+            
+            return movie_data
             
         except Exception as e:
-            print(f"Error scraping from URL {url}: {e}")
-        
-        return reviews
+            print(f"❌ Error fetching movie details: {e}")
+            return {'imdb_id': imdb_id, 'error': str(e)}
     
-    def _parse_review_advanced(self, review_element) -> Optional[Dict]:
-        """Advanced review parsing with multiple fallback methods"""
+    def _extract_basic_info(self, soup: BeautifulSoup) -> Dict:
+        """Extract basic movie information"""
+        data = {}
+        
         try:
-            review_data = {}
-            
-            # Try to determine review type
-            review_data['type'] = 'user'  # Default
-            
-            # Extract title with multiple selectors
+            # Title - multiple selectors
             title_selectors = [
-                'a.title',
-                'div.title',
-                'h3',
-                'span.title'
+                'h1[data-testid="hero__pageTitle"]',
+                '.title_wrapper h1',
+                'h1'
             ]
             
             for selector in title_selectors:
-                title_elem = review_element.select_one(selector)
-                if title_elem:
-                    review_data['title'] = title_elem.get_text(strip=True)
+                title_element = soup.select_one(selector)
+                if title_element:
+                    title_text = title_element.get_text(strip=True)
+                    # Clean title (remove year if present)
+                    title_text = re.sub(r'\s*\(\d{4}\)', '', title_text)
+                    data['title'] = title_text
                     break
-            else:
-                review_data['title'] = "No Title"
             
-            # Extract content with multiple selectors
-            content_selectors = [
-                'div.text',
-                'div.content',
-                'div.show-more__control',
-                'div.review-text'
+            # Year
+            year_element = soup.find('a', href=re.compile(r'releaseinfo'))
+            if year_element:
+                data['year'] = year_element.get_text(strip=True)
+            else:
+                # Extract from title or page
+                year_match = re.search(r'\((\d{4})\)', str(soup))
+                if year_match:
+                    data['year'] = year_match.group(1)
+            
+            # Duration
+            duration_selectors = [
+                'li[data-testid="title-techspec_runtime"]',
+                '.title_wrapper .subtext time'
             ]
             
-            for selector in content_selectors:
-                content_elem = review_element.select_one(selector)
-                if content_elem:
-                    # Remove spoilers
-                    for spoiler in content_elem.select('span.spoiler-warning'):
-                        spoiler.decompose()
-                    review_data['content'] = content_elem.get_text(' ', strip=True)
+            for selector in duration_selectors:
+                duration_element = soup.select_one(selector)
+                if duration_element:
+                    data['duration'] = duration_element.get_text(strip=True)
                     break
-            else:
-                # If no specific content element, try to get text from the container
-                review_data['content'] = review_element.get_text(' ', strip=True)[:500] + "..."
             
-            # Extract rating
-            rating = None
+            # IMDb Rating
             rating_selectors = [
-                'span.rating-other-user-rating',
-                'div.ipl-ratings-bar',
-                'span[class*="rating"]',
-                'div[class*="rating"]'
+                'div[data-testid="hero-rating-bar__aggregate-rating__score"]',
+                '.imdbRating span[itemprop="ratingValue"]',
+                '.ratingValue strong'
             ]
             
             for selector in rating_selectors:
-                rating_elem = review_element.select_one(selector)
-                if rating_elem:
-                    rating_text = rating_elem.get_text(strip=True)
-                    rating_match = re.search(r'(\d+)(?:\/10|\.)', rating_text)
-                    if rating_match:
-                        rating = rating_match.group(1)
+                rating_element = soup.select_one(selector)
+                if rating_element:
+                    data['imdb_rating'] = rating_element.get_text(strip=True)
+                    break
+            
+            # Rating Count
+            count_selectors = [
+                'div[data-testid="hero-rating-bar__aggregate-rating__score"] + div',
+                '.imdbRating span[itemprop="ratingCount"]'
+            ]
+            
+            for selector in count_selectors:
+                count_element = soup.select_one(selector)
+                if count_element:
+                    count_text = count_element.get_text(strip=True)
+                    count_match = re.search(r'([\d,]+)', count_text)
+                    if count_match:
+                        data['rating_count'] = count_match.group(1)
+                    break
+            
+        except Exception as e:
+            print(f"❌ Error extracting basic info: {e}")
+        print(data)
+        return data
+    
+    def _extract_summary_synopsis(self, soup: BeautifulSoup) -> Dict:
+        """Extract summary and synopsis"""
+        data = {}
+        
+        try:
+            # Summary
+            summary_selectors = [
+                'span[data-testid="plot-l"]',
+                '.summary_text',
+                '.plot_summary .summary_text'
+            ]
+            
+            for selector in summary_selectors:
+                summary_element = soup.select_one(selector)
+                if summary_element:
+                    summary_text = summary_element.get_text(strip=True)
+                    if summary_text and summary_text.lower() != 'add a plot':
+                        data['summary'] = summary_text
                         break
             
-            review_data['rating'] = rating
-            
-            # Extract author
-            author_selectors = [
-                'span.display-name-link',
-                'div.display-name-date',
-                'a.author',
-                'span[class*="author"]'
+            # Synopsis
+            synopsis_selectors = [
+                'div[data-testid="plot-xl"]',
+                '.plot-synopsis',
+                '.inline.canwrap p'
             ]
             
-            for selector in author_selectors:
-                author_elem = review_element.select_one(selector)
-                if author_elem:
-                    review_data['author'] = author_elem.get_text(strip=True)
-                    break
-            else:
-                review_data['author'] = "Anonymous"
+            for selector in synopsis_selectors:
+                synopsis_element = soup.select_one(selector)
+                if synopsis_element:
+                    synopsis_text = synopsis_element.get_text(strip=True)
+                    if synopsis_text and synopsis_text.lower() != 'add a plot':
+                        data['synopsis'] = synopsis_text
+                        break
             
-            # Extract date
-            date_selectors = [
-                'span.review-date',
-                'div.review-date',
-                'span[class*="date"]',
-                'div[class*="date"]'
-            ]
-            
-            for selector in date_selectors:
-                date_elem = review_element.select_one(selector)
-                if date_elem:
-                    review_data['date'] = date_elem.get_text(strip=True)
-                    break
-            else:
-                review_data['date'] = "Unknown Date"
-            
-            # Extract helpfulness
-            helpful_selectors = [
-                'div.actions',
-                'div.helpfulness-button',
-                'div[class*="helpful"]'
-            ]
-            
-            for selector in helpful_selectors:
-                helpful_elem = review_element.select_one(selector)
-                if helpful_elem:
-                    helpful_text = helpful_elem.get_text(strip=True)
-                    review_data['helpful'] = re.sub(r'\s+', ' ', helpful_text)
-                    break
-            else:
-                review_data['helpful'] = "Unknown"
-            
-            return review_data
-            
+            # If no synopsis, use summary
+            if 'synopsis' not in data and 'summary' in data:
+                data['synopsis'] = data['summary']
+                
         except Exception as e:
-            print(f"Error parsing review: {e}")
-            return None
+            print(f"❌ Error extracting summary/synopsis: {e}")
+        
+        return data
     
-    def scrape_reviews_alternative(self, imdb_id: str, max_reviews: int = 50) -> List[Dict]:
-        """Alternative approach using different endpoints"""
+    def _extract_cast(self, soup: BeautifulSoup) -> Dict:
+        """Extract cast information"""
+        data = {'cast': []}
+        
+        try:
+            # Modern IMDb cast section
+            cast_section = soup.find('div', {'data-testid': 'title-cast'})
+            if cast_section:
+                cast_items = cast_section.find_all('a', {'data-testid': 'title-cast-item__actor'})
+                
+                for item in cast_items[:20]:  # Limit to top 20
+                    actor_name = item.get_text(strip=True)
+                    
+                    # Find character name
+                    character_span = item.find_next('span', {'data-testid': 'title-cast-item__character'})
+                    character_name = character_span.get_text(strip=True) if character_span else "Unknown"
+                    
+                    data['cast'].append({
+                        'actor': actor_name,
+                        'character': character_name
+                    })
+            else:
+                # Legacy IMDb cast table
+                cast_table = soup.find('table', class_='cast_list')
+                if cast_table:
+                    cast_rows = cast_table.find_all('tr')[1:]  # Skip header
+                    for row in cast_rows[:20]:
+                        cells = row.find_all('td')
+                        if len(cells) >= 4:
+                            actor_cell = cells[1]
+                            character_cell = cells[3]
+                            
+                            actor_link = actor_cell.find('a')
+                            if actor_link:
+                                actor_name = actor_link.get_text(strip=True)
+                                character_name = character_cell.get_text(strip=True)
+                                
+                                # Clean character name
+                                character_name = re.sub(r'\s+', ' ', character_name).strip()
+                                
+                                data['cast'].append({
+                                    'actor': actor_name,
+                                    'character': character_name
+                                })
+        
+        except Exception as e:
+            print(f"❌ Error extracting cast: {e}")
+        
+        return data
+    
+    def _extract_storyline(self, soup: BeautifulSoup) -> Dict:
+        """Extract storyline information"""
+        data = {'storyline': {}}
+        
+        try:
+            # Plot summary
+            plot_selectors = [
+                'div[data-testid="storyline-plot-summary"]',
+                '.plot_summary_wrapper'
+            ]
+            
+            for selector in plot_selectors:
+                plot_element = soup.select_one(selector)
+                if plot_element:
+                    plot_text = plot_element.get_text(strip=True)
+                    if plot_text:
+                        data['storyline']['plot_summary'] = plot_text
+                        break
+            
+            # Genres
+            genre_elements = soup.find_all('a', href=re.compile(r'genres='))
+            if genre_elements:
+                genres = []
+                for elem in genre_elements:
+                    genre_text = elem.get_text(strip=True)
+                    if genre_text and genre_text not in genres:
+                        genres.append(genre_text)
+                data['storyline']['genres'] = genres
+            
+            # Keywords
+            keyword_elements = soup.find_all('a', href=re.compile(r'keywords'))
+            if keyword_elements:
+                keywords = []
+                for elem in keyword_elements:
+                    keyword_text = elem.get_text(strip=True)
+                    if keyword_text and keyword_text not in keywords:
+                        keywords.append(keyword_text)
+                data['storyline']['keywords'] = keywords
+            
+            # Tagline
+            tagline_element = soup.find('div', class_='txt-block')
+            if tagline_element and 'Tagline' in tagline_element.get_text():
+                tagline_text = tagline_element.get_text().replace('Tagline:', '').strip()
+                data['storyline']['tagline'] = tagline_text
+                
+        except Exception as e:
+            print(f"❌ Error extracting storyline: {e}")
+        
+        return data
+    
+    def _extract_ratings(self, soup: BeautifulSoup) -> Dict:
+        """Extract motion picture ratings"""
+        data = {}
+        
+        try:
+            # Content rating
+            rating_selectors = [
+                'a[href*="parentalguide"]',
+                'span.certificate',
+                '.subtext .certificate'
+            ]
+            
+            for selector in rating_selectors:
+                rating_element = soup.select_one(selector)
+                if rating_element:
+                    rating_text = rating_element.get_text(strip=True)
+                    if rating_text:
+                        data['content_rating'] = rating_text
+                        break
+        
+        except Exception as e:
+            print(f"❌ Error extracting ratings: {e}")
+        
+        return data
+    
+    def _extract_details(self, soup: BeautifulSoup) -> Dict:
+        """Extract movie details"""
+        data = {'details': {}}
+        
+        try:
+            # Modern details section
+            details_section = soup.find('div', {'data-testid': 'title-details'})
+            if details_section:
+                list_items = details_section.find_all('li', class_='ipc-metadata-list__item')
+                
+                for item in list_items:
+                    try:
+                        label = item.find('span', class_='ipc-metadata-list-item__label')
+                        if label:
+                            key = label.get_text(strip=True).lower().replace(' ', '_').replace(':', '')
+                            value_elements = item.find_all('a')
+                            if value_elements:
+                                values = [elem.get_text(strip=True) for elem in value_elements]
+                                data['details'][key] = values if len(values) > 1 else values[0]
+                    except:
+                        continue
+            
+            # Release date
+            release_element = soup.find('a', href=re.compile(r'releaseinfo'))
+            if release_element:
+                data['details']['release_date'] = release_element.get_text(strip=True)
+            
+            # Country of origin
+            country_element = soup.find('a', href=re.compile(r'country_of_origin'))
+            if country_element:
+                data['details']['country'] = country_element.get_text(strip=True)
+            
+            # Language
+            language_elements = soup.find_all('a', href=re.compile(r'primary_language'))
+            if language_elements:
+                languages = [elem.get_text(strip=True) for elem in language_elements]
+                data['details']['languages'] = languages
+        
+        except Exception as e:
+            print(f"❌ Error extracting details: {e}")
+        
+        return data
+    
+    def _extract_box_office(self, soup: BeautifulSoup) -> Dict:
+        """Extract box office information"""
+        data = {'box_office': {}}
+        
+        try:
+            # Modern box office section
+            box_office_section = soup.find('div', {'data-testid': 'title-boxoffice'})
+            if box_office_section:
+                list_items = box_office_section.find_all('li', class_='ipc-metadata-list__item')
+                
+                for item in list_items:
+                    try:
+                        label = item.find('span', class_='ipc-metadata-list-item__label')
+                        if label:
+                            key = label.get_text(strip=True).lower().replace(' ', '_')
+                            value = item.get_text().replace(label.get_text(), '').strip()
+                            data['box_office'][key] = value
+                    except:
+                        continue
+            
+            # Budget and gross from legacy format
+            budget_element = soup.find('h4', string='Budget:')
+            if budget_element:
+                budget_value = budget_element.find_next_sibling(string=True)
+                if budget_value:
+                    data['box_office']['budget'] = budget_value.strip()
+            
+            gross_element = soup.find('h4', string='Gross worldwide:')
+            if gross_element:
+                gross_value = gross_element.find_next_sibling(string=True)
+                if gross_value:
+                    data['box_office']['gross_worldwide'] = gross_value.strip()
+        
+        except Exception as e:
+            print(f"❌ Error extracting box office: {e}")
+        
+        return data
+    
+    def _extract_tech_specs(self, soup: BeautifulSoup) -> Dict:
+        """Extract technical specifications"""
+        data = {'technical_specs': {}}
+        
+        try:
+            # Modern tech specs section
+            tech_section = soup.find('div', {'data-testid': 'title-techspecs'})
+            if tech_section:
+                list_items = tech_section.find_all('li', class_='ipc-metadata-list__item')
+                
+                for item in list_items:
+                    try:
+                        label = item.find('span', class_='ipc-metadata-list-item__label')
+                        if label:
+                            key = label.get_text(strip=True).lower().replace(' ', '_').replace(':', '')
+                            value = item.get_text().replace(label.get_text(), '').strip()
+                            data['technical_specs'][key] = value
+                    except:
+                        continue
+            
+            # Color, aspect ratio, sound mix from legacy format
+            tech_elements = soup.find_all('h4', class_='inline')
+            for element in tech_elements:
+                text = element.get_text(strip=True).lower()
+                if 'color' in text:
+                    color_value = element.find_next_sibling(string=True)
+                    if color_value:
+                        data['technical_specs']['color'] = color_value.strip()
+                elif 'aspect ratio' in text:
+                    ratio_value = element.find_next_sibling(string=True)
+                    if ratio_value:
+                        data['technical_specs']['aspect_ratio'] = ratio_value.strip()
+                elif 'sound mix' in text:
+                    sound_value = element.find_next_sibling(string=True)
+                    if sound_value:
+                        data['technical_specs']['sound_mix'] = sound_value.strip()
+        
+        except Exception as e:
+            print(f"❌ Error extracting tech specs: {e}")
+        
+        return data
+    
+    def get_reviews_via_ddgs(self, movie_title: str, max_reviews: int = 20) -> List[Dict]:
+        """Get reviews using DDGS"""
         reviews = []
         
-        # Try the external reviews API approach
         try:
-            # This uses a different endpoint that might be more accessible
-            url = f"https://v2.sg.media-imdb.com/suggestion/t/{imdb_id}.json"
-            response = self.session.get(url)
+            print("📝 Searching for reviews...")
             
-            if response.status_code == 200:
-                data = response.json()
-                print("Alternative API response structure:", list(data.keys()) if data else "No data")
+            # Search for reviews
+            review_results = self.ddgs.text(
+                f"\"{movie_title}\" \"IMDb\" \"review\"", 
+                max_results=max_reviews
+            )
+            
+            for result in review_results:
+                if 'imdb.com' in result['href']:
+                    review_data = {
+                        'title': result['title'].replace(' - IMDb', ''),
+                        'content': result['body'],
+                        'url': result['href'],
+                        'type': 'user',
+                        'source': 'ddgs_search'
+                    }
+                    
+                    # Extract rating if available
+                    rating_match = re.search(r'(\d+)/10', result['title'] + ' ' + result['body'])
+                    if rating_match:
+                        review_data['rating'] = rating_match.group(1)
+                    
+                    reviews.append(review_data)
+        
         except Exception as e:
-            print(f"Alternative API failed: {e}")
+            print(f"❌ Error getting reviews: {e}")
         
         return reviews
     
-    def scrape_reviews(self, movie_title: str, max_reviews: int = 50) -> Dict:
-        """Main method to scrape reviews with enhanced error handling"""
-        print(f"Searching for movie: {movie_title}")
+    def get_featured_reviews_via_ddgs(self, movie_title: str, max_reviews: int = 10) -> List[Dict]:
+        """Get featured/critic reviews using DDGS"""
+        reviews = []
         
-        imdb_id = self.get_movie_id(movie_title)
-        if not imdb_id:
-            # Try with known ID for testing
-            if "dark knight" in movie_title.lower():
-                imdb_id = "tt0468569"
-            else:
-                print("Movie not found! Please check the movie title.")
-                return {
-                    'movie_title': movie_title,
-                    'imdb_id': None,
-                    'reviews': [],
-                    'error': 'Movie not found'
-                }
+        try:
+            print("🌟 Searching for featured reviews...")
+            
+            # Search for critic/featured reviews
+            review_results = self.ddgs.text(
+                f"\"{movie_title}\" \"IMDb\" \"critic review\"", 
+                max_results=max_reviews
+            )
+            
+            for result in review_results:
+                if 'imdb.com' in result['href']:
+                    review_data = {
+                        'title': result['title'].replace(' - IMDb', ''),
+                        'content': result['body'],
+                        'url': result['href'],
+                        'type': 'critic',
+                        'source': 'ddgs_search'
+                    }
+                    
+                    reviews.append(review_data)
         
-        print(f"Using IMDb ID: {imdb_id}")
-        print("Scraping reviews...")
+        except Exception as e:
+            print(f"❌ Error getting featured reviews: {e}")
         
-        reviews = self.get_reviews(imdb_id, max_reviews)
+        return reviews
+    
+    def scrape_comprehensive_movie_data(self, movie_title: str) -> Dict:
+        """Comprehensive movie data scraping"""
+        print(f"\n🎬 Starting comprehensive data collection for: {movie_title}")
+        print("=" * 70)
         
-        if not reviews:
-            print("Trying alternative scraping method...")
-            reviews = self.scrape_reviews_alternative(imdb_id, max_reviews)
+        # Step 1: Search for movie
+        movie_info = self.search_movie(movie_title)
+        if not movie_info:
+            return {'error': f'Movie "{movie_title}" not found'}
         
-        # Separate critic and user reviews
-        critic_reviews = [r for r in reviews if r.get('type') == 'critic']
-        user_reviews = [r for r in reviews if r.get('type') == 'user']
+        # Step 2: Get detailed movie information
+        movie_data = self.get_movie_details(movie_info['imdb_id'])
         
-        return {
-            'movie_title': movie_title,
-            'imdb_id': imdb_id,
-            'critic_reviews': critic_reviews,
-            'user_reviews': user_reviews,
-            'all_reviews': reviews,
-            'error': None if reviews else 'No reviews found'
-        }
+        # Step 3: Get user reviews
+        user_reviews = self.get_reviews_via_ddgs(movie_title, 15)
+        movie_data['user_reviews'] = user_reviews
+        
+        # Step 4: Get featured reviews
+        featured_reviews = self.get_featured_reviews_via_ddgs(movie_title, 10)
+        movie_data['featured_reviews'] = featured_reviews
+        
+        # Step 5: Add search info
+        movie_data['search_info'] = movie_info
+        
+        print(f"✅ Data collection completed for: {movie_title}")
+        return movie_data
 
-def debug_current_page(url: str):
-    """Debug the current page content"""
-    scraper = IMDbScraper()
+def save_movie_data(movie_data: Dict, format: str = 'both'):
+    """Save movie data to file(s)"""
+    movie_title = movie_data.get('title', 'unknown_movie').replace(' ', '_')
+    
+    if format in ['json', 'both']:
+        filename = f"imdb_data_{movie_title}.json"
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(movie_data, f, indent=2, ensure_ascii=False)
+        print(f"💾 JSON data saved to: {filename}")
+    
+    if format in ['csv', 'both']:
+        # Create flattened CSV for main data
+        flat_data = {}
+        for key, value in movie_data.items():
+            if key not in ['cast', 'user_reviews', 'featured_reviews', 'storyline', 'details', 'box_office', 'technical_specs']:
+                if isinstance(value, (dict, list)):
+                    flat_data[key] = json.dumps(value, ensure_ascii=False)
+                else:
+                    flat_data[key] = value
+        
+        df_main = pd.DataFrame([flat_data])
+        csv_filename = f"imdb_data_{movie_title}.csv"
+        df_main.to_csv(csv_filename, index=False, encoding='utf-8')
+        print(f"💾 Main data CSV saved to: {csv_filename}")
+        
+        # Save cast separately
+        if movie_data.get('cast'):
+            df_cast = pd.DataFrame(movie_data['cast'])
+            cast_filename = f"imdb_cast_{movie_title}.csv"
+            df_cast.to_csv(cast_filename, index=False, encoding='utf-8')
+            print(f"💾 Cast CSV saved to: {cast_filename}")
+        
+        # Save reviews separately
+        if movie_data.get('user_reviews'):
+            df_reviews = pd.DataFrame(movie_data['user_reviews'])
+            reviews_filename = f"imdb_reviews_{movie_title}.csv"
+            df_reviews.to_csv(reviews_filename, index=False, encoding='utf-8')
+            print(f"💾 Reviews CSV saved to: {reviews_filename}")
+
+def print_movie_summary(movie_data: Dict):
+    """Print a summary of the movie data"""
+    print(f"\n{'='*70}")
+    print(f"🎬 MOVIE SUMMARY: {movie_data.get('title', 'Unknown')}")
+    print(f"{'='*70}")
+    
+    # Basic Info
+    print(f"📺 Title: {movie_data.get('title', 'N/A')}")
+    print(f"📅 Year: {movie_data.get('year', 'N/A')}")
+    print(f"⏱️  Duration: {movie_data.get('duration', 'N/A')}")
+    print(f"⭐ IMDb Rating: {movie_data.get('imdb_rating', 'N/A')}")
+    print(f"🎭 Content Rating: {movie_data.get('content_rating', 'N/A')}")
+    
+    # Summary
+    if movie_data.get('summary'):
+        print(f"\n📖 Summary: {movie_data.get('summary', 'N/A')[:200]}...")
+    
+    # Cast
+    if movie_data.get('cast'):
+        print(f"\n🎭 Top Cast:")
+        for actor in movie_data['cast'][:5]:
+            print(f"   • {actor.get('actor', 'N/A')} as {actor.get('character', 'N/A')}")
+    
+    # Reviews
+    if movie_data.get('user_reviews'):
+        print(f"\n📝 User Reviews: {len(movie_data['user_reviews'])} found")
+    
+    if movie_data.get('featured_reviews'):
+        print(f"🌟 Featured Reviews: {len(movie_data['featured_reviews'])} found")
+    
+    # Technical Info
+    if movie_data.get('technical_specs'):
+        print(f"\n🔧 Technical Specs: {len(movie_data['technical_specs'])} items")
+    
+    if movie_data.get('box_office'):
+        print(f"💰 Box Office: {len(movie_data['box_office'])} items")
+
+# Quick test function
+def test_ddgs_connection():
+    """Test DDGS connection and basic functionality"""
+    print("🧪 Testing DDGS connection...")
     
     try:
-        response = scraper.session.get(url)
-        soup = BeautifulSoup(response.content, 'html.parser')
+        ddgs = DDGS()
+        results = list(ddgs.text("The Dark Knight IMDb", max_results=2))
         
-        print(f"\n=== DEBUG: {url} ===")
-        print(f"Status: {response.status_code}")
-        print(f"Title: {soup.title.string if soup.title else 'No title'}")
-        
-        # Look for specific elements
-        print("\nSearching for review-related elements:")
-        
-        # Check for error messages
-        error_elements = soup.find_all(text=re.compile(r'404|error|not found', re.I))
-        if error_elements:
-            print("Error messages found:", error_elements[:3])
-        
-        # Check for review containers
-        for class_name in ['review', 'lister', 'user', 'critic', 'text', 'content']:
-            elements = soup.find_all(class_=re.compile(class_name, re.I))
-            if elements:
-                print(f"Elements with '{class_name}': {len(elements)}")
-        
-        # Save detailed debug info
-        with open("detailed_debug.html", "w", encoding="utf-8") as f:
-            f.write(soup.prettify())
-        
-        return True
-    except Exception as e:
-        print(f"Debug error: {e}")
-        return False
-# Keep the helper functions from your original code
-def save_reviews_to_csv(reviews_data: Dict, filename: str = None):
-    """Save reviews to CSV file"""
-    if not reviews_data or not reviews_data.get('all_reviews'):
-        print("No reviews data to save")
-        return None
-    
-    if not filename:
-        movie_title = reviews_data['movie_title'].replace(' ', '_')
-        filename = f"imdb_reviews_{movie_title}.csv"
-    
-    all_reviews = reviews_data.get('all_reviews', [])
-    
-    if all_reviews:
-        df = pd.DataFrame(all_reviews)
-        df.to_csv(filename, index=False, encoding='utf-8')
-        print(f"Reviews saved to {filename}")
-        return df
-    else:
-        print("No reviews to save")
-        return None
-
-def print_review_stats(reviews_data: Dict):
-    """Print basic statistics about the scraped reviews"""
-    if not reviews_data or 'movie_title' not in reviews_data:
-        print("No reviews data available")
-        return
-        
-    print(f"\n=== Review Statistics for '{reviews_data['movie_title']}' ===")
-    critic_count = len(reviews_data.get('critic_reviews', []))
-    user_count = len(reviews_data.get('user_reviews', []))
-    total_count = len(reviews_data.get('all_reviews', []))
-    
-    print(f"Critic Reviews: {critic_count}")
-    print(f"User Reviews: {user_count}")
-    print(f"Total Reviews: {total_count}")
-    
-    
-# Enhanced usage example
-if __name__ == "__main__":
-    scraper = IMDbScraper()
-     
-         # Test movies with known IDs
-    test_movies = [
-        ("The Dark Knight", "tt0468569"),
-        ("Inception", "tt1375666"),
-        ("The Shawshank Redemption", "tt0111161")
-    ]
-    
-    for movie_title, known_id in test_movies:
-        print(f"\n{'='*60}")
-        print(f"Testing: {movie_title}")
-        print('='*60)
-        
-        # First debug the page
-        test_url = f"https://www.imdb.com/title/{known_id}/reviews"
-        debug_current_page(test_url)
-        
-        # Then try scraping
-        reviews_data = scraper.scrape_reviews(movie_title, max_reviews=20)
-        
-        # Print results
-        print_review_stats(reviews_data)
-        
-        if reviews_data.get('all_reviews'):
-            save_reviews_to_csv(reviews_data)
+        if results:
+            print("✅ DDGS is working correctly!")
+            print(f"Found {len(results)} results")
+            for i, result in enumerate(results):
+                print(f"{i+1}. {result['title']}")
+            return True
+        else:
+            print("❌ No results found")
+            return False
             
-            # Show sample
-            reviews = reviews_data['all_reviews'][:2]
-            for i, review in enumerate(reviews):
-                print(f"\nSample {i+1}:")
-                print(f"Type: {review.get('type', 'N/A')}")
-                print(f"Title: {review.get('title', 'N/A')}")
-                print(f"Content preview: {review.get('content', 'N/A')[:100]}...")
-        
-        time.sleep(3)  # 
+    except Exception as e:
+        print(f"❌ DDGS test failed: {e}")
+        return False
 
+# Example usage
+if __name__ == "__main__":
+    # Test DDGS connection first
+    if test_ddgs_connection():
+        # Initialize scraper
+        scraper = IMDbScraperDDGS()
+        
+        # Test movies
+        test_movies = [
+            "Aquaman",
+            "Superman"
+        ]
+        
+        for movie in test_movies:
+            print(f"\n{'#'*80}")
+            print(f"PROCESSING: {movie}")
+            print(f"{'#'*80}")
+            
+            # Scrape comprehensive data
+            movie_data = scraper.scrape_comprehensive_movie_data(movie)
+            
+            if 'error' not in movie_data:
+                # Print summary
+                print_movie_summary(movie_data)
+                
+                # Save data
+                save_movie_data(movie_data, 'both')
+            else:
+                print(f"❌ Failed to scrape data for {movie}: {movie_data['error']}")
+            
+            # Be respectful - add delay
+            time.sleep(3)
+    else:
+        print("❌ Cannot proceed without DDGS connection")
