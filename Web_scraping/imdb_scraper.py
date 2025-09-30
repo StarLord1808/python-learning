@@ -632,10 +632,29 @@ class IMDbScraperDDGS:
         
         return reviews
     
-    def scrape_comprehensive_movie_data(self, movie_title: str) -> Dict:
-        """Comprehensive movie data scraping"""
+
+    def scrape_comprehensive_movie_data(self, movie_title: str, year: Optional[int] = None) -> Dict:
+        """Orchestrates the comprehensive scraping of movie data for a given title.
+
+        This method performs a sequence of actions:
+        1. Searches for the movie on IMDb to get its ID.
+        2. Scrapes detailed information from the movie's main page.
+        3. Fetches user reviews using an external search.
+        4. Fetches critic/featured reviews using an external search.
+        5. Compiles all collected data into a single dictionary.
+
+        Args:
+            movie_title (str): The title of the movie to be scraped.
+
+        Returns:
+            Dict: A dictionary containing all scraped movie data. If the movie
+                  cannot be found, it returns a dictionary with an 'error' key.
+        """
         print(f"\n🎬 Starting comprehensive data collection for: {movie_title}")
         print("=" * 70)
+        
+        searcher = ImprovedIMDbScraper()
+        
         
         # Step 1: Search for movie
         movie_info = self.searcher.improved_search_movie(movie_title)
