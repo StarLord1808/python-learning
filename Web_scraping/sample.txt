@@ -1,8 +1,3 @@
-🧪 Testing DDGS connection...
-✅ DDGS is working correctly!
-Found 2 results
-1. The Dark Knight (2008) - IMDb
-2. The Dark Knight (2008) - Full cast & crew - IMDb
 
 ################################################################################
 PROCESSING: The Dark Knight
@@ -11,7 +6,7 @@ PROCESSING: The Dark Knight
 🎬 Starting comprehensive data collection for: The Dark Knight
 ======================================================================
 🔍 Searching for: The Dark Knight 
-✅ Found: The Dark Knight (2008) - IMDb The Dark Knight (2008) - Full cast & crew - IMDb The Dark Knight (2008) - Parents guide - IMDb The Dark Knight (2008) - Plot - IMDb The Dark Knight (2008) - Technical specifications - IMDb The Dark Knight (2008) - User reviews - IMDb The Dark Knight (2008) - IMDb The Dark Knight (2008) - User reviews - IMDb The Dark Knight (2008) - IMDb The Dark Knight (2008) - Parents guide - IMDb The Dark Knight (2008) - Company credits - IMDb (Score: 1.00)
+✅ Found: The Dark Knight (2008) - User reviews (Score: 1.00)
 🎬 Fetching movie details for tt0468569...
 {'title': 'The Dark Knight', 'year': '2008', 'duration': 'Runtime2h 32m(152 min)', 'imdb_rating': '9.1/10'}
 📝 Searching for reviews...
@@ -36,8 +31,8 @@ PROCESSING: The Dark Knight
    • Michael Caine as Alfred
    • Maggie Gyllenhaal as Rachel
 
-📝 User Reviews: 9 found
-🌟 Featured Reviews: 1 found
+📝 User Reviews: 8 found
+🌟 Featured Reviews: 3 found
 
 🔧 Technical Specs: 3 items
 💰 Box Office: 4 items
