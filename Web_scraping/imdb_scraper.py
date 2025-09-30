@@ -8,6 +8,7 @@ import re
 import json
 from typing import List, Dict, Optional
 from urllib.parse import urljoin, urlparse
+from imdb_searcher import ImprovedIMDbScraper
 
 class IMDbScraperDDGS:
     def __init__(self):
@@ -796,8 +797,7 @@ if __name__ == "__main__":
         
         # Test movies
         test_movies = [
-            "The Dark Knight",
-            "F1"
+            "The Dark Knight"
         ]
         
         for movie in test_movies:
