@@ -1,0 +1,42 @@
+
+################################################################################
+PROCESSING: The Dark Knight
+################################################################################
+
+🎬 Starting comprehensive data collection for: The Dark Knight
+======================================================================
+🔍 Searching for: The Dark Knight 
+✅ Found: The Dark Knight (2008) - User reviews (Score: 1.00)
+🎬 Fetching movie details for tt0468569...
+{'title': 'The Dark Knight', 'year': '2008', 'duration': 'Runtime2h 32m(152 min)', 'imdb_rating': '9.1/10'}
+📝 Searching for reviews...
+🌟 Searching for featured reviews...
+✅ Data collection completed for: The Dark Knight
+
+======================================================================
+🎬 MOVIE SUMMARY: The Dark Knight
+======================================================================
+📺 Title: The Dark Knight
+📅 Year: 2008
+⏱️  Duration: Runtime2h 32m(152 min)
+⭐ IMDb Rating: 9.1/10
+🎭 Content Rating: PG-13
+
+📖 Summary: When a menace known as the Joker wreaks havoc and chaos on the people of Gotham, Batman, James Gordon and Harvey Dent must work together to put an end to the madness....
+
+🎭 Top Cast:
+   • Christian Bale as Bruce Wayne
+   • Heath Ledger as Joker
+   • Aaron Eckhart as Harvey Dent
+   • Michael Caine as Alfred
+   • Maggie Gyllenhaal as Rachel
+
+📝 User Reviews: 8 found
+🌟 Featured Reviews: 3 found
+
+🔧 Technical Specs: 3 items
+💰 Box Office: 4 items
+💾 JSON data saved to: Doc/json/imdb_data_The_Dark_Knight.json
+💾 Main data CSV saved to: Doc/csv/imdb_data_The_Dark_Knight.csv
+💾 Cast CSV saved to: Doc/csv/imdb_cast_The_Dark_Knight.csv
+💾 Reviews CSV saved to: Doc/csv/imdb_reviews_The_Dark_Knight.csv
