@@ -9,49 +9,19 @@ import json
 from typing import List, Dict, Optional
 from urllib.parse import urljoin, urlparse
 from imdb_searcher import ImprovedIMDbScraper
+from pathlib import Path
 
 class IMDbScraperDDGS:
     def __init__(self):
         self.ddgs = DDGS()
         self.session = requests.Session()
+        self.searcher = ImprovedIMDbScraper(ddgs=self.ddgs)
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
         })
         self.base_url = "https://www.imdb.com"
-    
-    def search_movie(self, movie_title: str) -> Optional[Dict]:
-        """Search for movie using DDGS and return movie information"""
-        try:
-            print(f"🔍 Searching for: {movie_title}")
-            
-            # Use DDGS text search
-            results = self.ddgs.text(
-                f"{movie_title} IMDb", 
-                max_results=5
-            )
-            
-            for result in results:
-                if 'imdb.com/title/tt' in result['href']:
-                    # Extract IMDb ID from URL
-                    match = re.search(r'imdb\.com/title/(tt\d+)', result['href'])
-                    if match:
-                        imdb_id = match.group(1)
-                        return {
-                            'imdb_id': imdb_id,
-                            'title': movie_title,
-                            'url': result['href'],
-                            'description': result['body'],
-                            'search_title': result['title']
-                        }
-            
-            print(f"❌ Movie '{movie_title}' not found in search results")
-            return None
-            
-        except Exception as e:
-            print(f"❌ Error searching for movie: {e}")
-            return None
     
     def get_movie_details(self, imdb_id: str) -> Dict:
         """Extract comprehensive movie details from IMDb page"""
@@ -668,7 +638,7 @@ class IMDbScraperDDGS:
         print("=" * 70)
         
         # Step 1: Search for movie
-        movie_info = self.search_movie(movie_title)
+        movie_info = self.searcher.improved_search_movie(movie_title)
         if not movie_info:
             return {'error': f'Movie "{movie_title}" not found'}
         
@@ -689,135 +659,86 @@ class IMDbScraperDDGS:
         print(f"✅ Data collection completed for: {movie_title}")
         return movie_data
 
-def save_movie_data(movie_data: Dict, format: str = 'both'):
-    """Save movie data to file(s)"""
-    movie_title = movie_data.get('title', 'unknown_movie').replace(' ', '_')
-    
-    if format in ['json', 'both']:
-        filename = f"imdb_data_{movie_title}.json"
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(movie_data, f, indent=2, ensure_ascii=False)
-        print(f"💾 JSON data saved to: {filename}")
-    
-    if format in ['csv', 'both']:
-        # Create flattened CSV for main data
-        flat_data = {}
-        for key, value in movie_data.items():
-            if key not in ['cast', 'user_reviews', 'featured_reviews', 'storyline', 'details', 'box_office', 'technical_specs']:
-                if isinstance(value, (dict, list)):
-                    flat_data[key] = json.dumps(value, ensure_ascii=False)
-                else:
-                    flat_data[key] = value
+    def save_movie_data(self, movie_data: Dict, format: str = 'both', file_location: Path = Path("Doc")):
+        """Save movie data to JSON and/or CSV files in the specified directory."""
+
+        # Create base and subdirectories if they don't exist
+        file_location.mkdir(parents=True, exist_ok=True)
+        csv_dir = file_location / "csv"
+        json_dir = file_location / "json"
+        csv_dir.mkdir(exist_ok=True)
+        json_dir.mkdir(exist_ok=True)
+
+        # Sanitize movie title for filenames
+        movie_title = movie_data.get('title', 'unknown_movie').replace(' ', '_')
+
+        # Save JSON
+        if format in ['json', 'both']:
+            json_filename = json_dir / f"imdb_data_{movie_title}.json"
+            with open(json_filename, 'w', encoding='utf-8') as f:
+                json.dump(movie_data, f, indent=2, ensure_ascii=False)
+            print(f"💾 JSON data saved to: {json_filename}")
+
+        # Save CSV files
+        if format in ['csv', 'both']:
+            # Create flattened CSV for main data
+            flat_data = {}
+            for key, value in movie_data.items():
+                if key not in ['cast', 'user_reviews', 'featured_reviews', 'storyline', 'details', 'box_office', 'technical_specs']:
+                    flat_data[key] = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value
+            
+            df_main = pd.DataFrame([flat_data])
+            main_csv_filename = csv_dir / f"imdb_data_{movie_title}.csv"
+            df_main.to_csv(main_csv_filename, index=False, encoding='utf-8')
+            print(f"💾 Main data CSV saved to: {main_csv_filename}")
+
+            # Save cast
+            if movie_data.get('cast'):
+                df_cast = pd.DataFrame(movie_data['cast'])
+                cast_filename = csv_dir / f"imdb_cast_{movie_title}.csv"
+                df_cast.to_csv(cast_filename, index=False, encoding='utf-8')
+                print(f"💾 Cast CSV saved to: {cast_filename}")
+
+            # Save reviews
+            if movie_data.get('user_reviews'):
+                df_reviews = pd.DataFrame(movie_data['user_reviews'])
+                reviews_filename = csv_dir / f"imdb_reviews_{movie_title}.csv"
+                df_reviews.to_csv(reviews_filename, index=False, encoding='utf-8')
+                print(f"💾 Reviews CSV saved to: {reviews_filename}")
+
+    def print_movie_summary(self, movie_data: Dict):
+        """Print a summary of the movie data"""
+        print(f"\n{'='*70}")
+        print(f"🎬 MOVIE SUMMARY: {movie_data.get('title', 'Unknown')}")
+        print(f"{'='*70}")
         
-        df_main = pd.DataFrame([flat_data])
-        csv_filename = f"imdb_data_{movie_title}.csv"
-        df_main.to_csv(csv_filename, index=False, encoding='utf-8')
-        print(f"💾 Main data CSV saved to: {csv_filename}")
+        # Basic Info
+        print(f"📺 Title: {movie_data.get('title', 'N/A')}")
+        print(f"📅 Year: {movie_data.get('year', 'N/A')}")
+        print(f"⏱️  Duration: {movie_data.get('duration', 'N/A')}")
+        print(f"⭐ IMDb Rating: {movie_data.get('imdb_rating', 'N/A')}")
+        print(f"🎭 Content Rating: {movie_data.get('content_rating', 'N/A')}")
         
-        # Save cast separately
+        # Summary
+        if movie_data.get('summary'):
+            print(f"\n📖 Summary: {movie_data.get('summary', 'N/A')[:200]}...")
+        
+        # Cast
         if movie_data.get('cast'):
-            df_cast = pd.DataFrame(movie_data['cast'])
-            cast_filename = f"imdb_cast_{movie_title}.csv"
-            df_cast.to_csv(cast_filename, index=False, encoding='utf-8')
-            print(f"💾 Cast CSV saved to: {cast_filename}")
+            print(f"\n🎭 Top Cast:")
+            for actor in movie_data['cast'][:5]:
+                print(f"   • {actor.get('actor', 'N/A')} as {actor.get('character', 'N/A')}")
         
-        # Save reviews separately
+        # Reviews
         if movie_data.get('user_reviews'):
-            df_reviews = pd.DataFrame(movie_data['user_reviews'])
-            reviews_filename = f"imdb_reviews_{movie_title}.csv"
-            df_reviews.to_csv(reviews_filename, index=False, encoding='utf-8')
-            print(f"💾 Reviews CSV saved to: {reviews_filename}")
-
-def print_movie_summary(movie_data: Dict):
-    """Print a summary of the movie data"""
-    print(f"\n{'='*70}")
-    print(f"🎬 MOVIE SUMMARY: {movie_data.get('title', 'Unknown')}")
-    print(f"{'='*70}")
-    
-    # Basic Info
-    print(f"📺 Title: {movie_data.get('title', 'N/A')}")
-    print(f"📅 Year: {movie_data.get('year', 'N/A')}")
-    print(f"⏱️  Duration: {movie_data.get('duration', 'N/A')}")
-    print(f"⭐ IMDb Rating: {movie_data.get('imdb_rating', 'N/A')}")
-    print(f"🎭 Content Rating: {movie_data.get('content_rating', 'N/A')}")
-    
-    # Summary
-    if movie_data.get('summary'):
-        print(f"\n📖 Summary: {movie_data.get('summary', 'N/A')[:200]}...")
-    
-    # Cast
-    if movie_data.get('cast'):
-        print(f"\n🎭 Top Cast:")
-        for actor in movie_data['cast'][:5]:
-            print(f"   • {actor.get('actor', 'N/A')} as {actor.get('character', 'N/A')}")
-    
-    # Reviews
-    if movie_data.get('user_reviews'):
-        print(f"\n📝 User Reviews: {len(movie_data['user_reviews'])} found")
-    
-    if movie_data.get('featured_reviews'):
-        print(f"🌟 Featured Reviews: {len(movie_data['featured_reviews'])} found")
-    
-    # Technical Info
-    if movie_data.get('technical_specs'):
-        print(f"\n🔧 Technical Specs: {len(movie_data['technical_specs'])} items")
-    
-    if movie_data.get('box_office'):
-        print(f"💰 Box Office: {len(movie_data['box_office'])} items")
-
-# Quick test function
-def test_ddgs_connection():
-    """Test DDGS connection and basic functionality"""
-    print("🧪 Testing DDGS connection...")
-    
-    try:
-        ddgs = DDGS()
-        results = list(ddgs.text("The Dark Knight IMDb", max_results=2))
+            print(f"\n📝 User Reviews: {len(movie_data['user_reviews'])} found")
         
-        if results:
-            print("✅ DDGS is working correctly!")
-            print(f"Found {len(results)} results")
-            for i, result in enumerate(results):
-                print(f"{i+1}. {result['title']}")
-            return True
-        else:
-            print("❌ No results found")
-            return False
-            
-    except Exception as e:
-        print(f"❌ DDGS test failed: {e}")
-        return False
-
-# Example usage
-if __name__ == "__main__":
-    # Test DDGS connection first
-    if test_ddgs_connection():
-        # Initialize scraper
-        scraper = IMDbScraperDDGS()
+        if movie_data.get('featured_reviews'):
+            print(f"🌟 Featured Reviews: {len(movie_data['featured_reviews'])} found")
         
-        # Test movies
-        test_movies = [
-            "The Dark Knight"
-        ]
+        # Technical Info
+        if movie_data.get('technical_specs'):
+            print(f"\n🔧 Technical Specs: {len(movie_data['technical_specs'])} items")
         
-        for movie in test_movies:
-            print(f"\n{'#'*80}")
-            print(f"PROCESSING: {movie}")
-            print(f"{'#'*80}")
-            
-            # Scrape comprehensive data
-            movie_data = scraper.scrape_comprehensive_movie_data(movie)
-            
-            if 'error' not in movie_data:
-                # Print summary
-                print_movie_summary(movie_data)
-                
-                # Save data
-                save_movie_data(movie_data, 'both')
-            else:
-                print(f"❌ Failed to scrape data for {movie}: {movie_data['error']}")
-            
-            # Be respectful - add delay
-            time.sleep(3)
-    else:
-        print("❌ Cannot proceed without DDGS connection")
+        if movie_data.get('box_office'):
+            print(f"💰 Box Office: {len(movie_data['box_office'])} items")
