@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Year Progress</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    min-height:100vh;
+    background:#0a0a0f;
+    display:flex; align-items:center; justify-content:center;
+    font-family:'Segoe UI',system-ui,sans-serif;
+    color:#e8e8f0; overflow:hidden;
+  }
+  canvas#bg { position:fixed; inset:0; z-index:0; }
+
+  .layout {
+    position:relative; z-index:1;
+    display:flex; gap:16px; align-items:flex-start;
+    width:min(1060px,96vw);
+  }
+
+  /* ── Main card ── */
+  .card {
+    flex:1;
+    background:rgba(255,255,255,0.04);
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:24px;
+    padding:40px 44px;
+    backdrop-filter:blur(18px);
+  }
+
+  .year-label { font-size:13px; letter-spacing:0.12em; text-transform:uppercase; color:rgba(255,255,255,0.35); margin-bottom:6px; }
+  .year-big   { font-size:52px; font-weight:700; letter-spacing:-2px; color:#fff; line-height:1; margin-bottom:4px; }
+  .date-line  { font-size:14px; color:rgba(255,255,255,0.4); margin-bottom:34px; }
+
+  .bar-wrap  { background:rgba(255,255,255,0.07); border-radius:100px; height:10px; margin-bottom:10px; overflow:hidden; }
+  .bar-fill  { height:100%; border-radius:100px; background:linear-gradient(90deg,#4f8ef7,#a78bfa); transition:width 1s ease; }
+  .bar-labels{ display:flex; justify-content:space-between; font-size:12px; color:rgba(255,255,255,0.3); margin-bottom:36px; }
+
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:36px; }
+  .stat  { background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.07); border-radius:16px; padding:18px 16px; }
+  .stat-label{ font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.3); margin-bottom:8px; }
+  .stat-value{ font-size:34px; font-weight:700; letter-spacing:-1.5px; color:#fff; line-height:1; }
+  .stat-value.accent  { color:#a78bfa; }
+  .stat-value.accent2 { color:#4f8ef7; }
+  .stat-sub  { font-size:11px; color:rgba(255,255,255,0.25); margin-top:6px; }
+
+  .section-title { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.25); margin-bottom:12px; }
+
+  .months { display:grid; grid-template-columns:repeat(12,1fr); gap:6px; margin-bottom:26px; }
+  .month  { border-radius:8px; padding:8px 4px; text-align:center; font-size:11px; font-weight:500;
+            background:rgba(255,255,255,0.05); color:rgba(255,255,255,0.2); border:1px solid rgba(255,255,255,0.06); }
+  .month.done    { background:rgba(79,142,247,0.2); color:#93b8fb; border-color:rgba(79,142,247,0.3); }
+  .month.current { background:rgba(167,139,250,0.2); color:#c4b0fd; border-color:rgba(167,139,250,0.4); position:relative; }
+  .month.current::after { content:''; position:absolute; bottom:4px; left:50%; transform:translateX(-50%); width:4px; height:4px; border-radius:50%; background:#a78bfa; }
+
+  .weeks     { display:flex; flex-wrap:wrap; gap:5px; }
+  .week      { width:10px; height:10px; border-radius:3px; background:rgba(255,255,255,0.07); }
+  .week.done { background:rgba(79,142,247,0.5); }
+  .week.current { background:#a78bfa; }
+
+  .quote-wrap { margin-top:28px; border-top:1px solid rgba(255,255,255,0.07); padding-top:22px; display:flex; gap:16px; align-items:flex-start; }
+  .quote-bar  { width:3px; flex-shrink:0; border-radius:100px; background:linear-gradient(180deg,#4f8ef7,#a78bfa); align-self:stretch; min-height:36px; }
+  .quote-text { font-size:14px; line-height:1.7; color:rgba(255,255,255,0.7); font-style:italic; flex:1; }
+  .quote-author { font-size:12px; color:rgba(255,255,255,0.3); margin-top:6px; font-style:normal; }
+
+  .footer { margin-top:18px; font-size:11px; color:rgba(255,255,255,0.15); text-align:right; }
+
+  /* ── Hourly card ── */
+  .hour-card {
+    width:200px; flex-shrink:0;
+    background:rgba(255,255,255,0.04);
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:24px;
+    padding:28px 22px;
+    backdrop-filter:blur(18px);
+  }
+  .hour-title { font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:rgba(255,255,255,0.25); margin-bottom:6px; }
+  .hour-date  { font-size:13px; color:rgba(255,255,255,0.5); margin-bottom:20px; }
+
+  /* big arc */
+  .arc-wrap   { display:flex; justify-content:center; margin-bottom:18px; }
+  svg.arc     { overflow:visible; }
+
+  .hour-pct   { font-size:28px; font-weight:700; letter-spacing:-1px; color:#fff; text-align:center; line-height:1; }
+  .hour-sub   { font-size:11px; color:rgba(255,255,255,0.3); text-align:center; margin-top:4px; margin-bottom:22px; }
+
+  /* 24-cell grid */
+  .hour-grid  { display:grid; grid-template-columns:repeat(6,1fr); gap:4px; margin-bottom:18px; }
+  .hcell      { height:14px; border-radius:3px; background:rgba(255,255,255,0.07); position:relative; }
+  .hcell.done { background:rgba(79,142,247,0.55); }
+  .hcell.now  { background:#a78bfa; }
+
+  .hour-labels{ display:flex; justify-content:space-between; font-size:10px; color:rgba(255,255,255,0.2); margin-bottom:6px; }
+
+  .hour-stats { display:flex; flex-direction:column; gap:8px; }
+  .hstat      { display:flex; justify-content:space-between; align-items:baseline; }
+  .hstat-l    { font-size:11px; color:rgba(255,255,255,0.3); }
+  .hstat-v    { font-size:13px; font-weight:600; color:rgba(255,255,255,0.8); }
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<div class="layout">
+
+  <!-- Main card -->
+  <div class="card">
+    <div class="year-label">Year in progress</div>
+    <div class="year-big" id="yr"></div>
+    <div class="date-line" id="dateline"></div>
+
+    <div class="bar-wrap"><div class="bar-fill" id="bar"></div></div>
+    <div class="bar-labels"><span>Jan 1</span><span id="pct-label"></span><span>Dec 31</span></div>
+
+    <div class="stats">
+      <div class="stat"><div class="stat-label">Day of year</div><div class="stat-value accent2" id="s-day"></div><div class="stat-sub" id="s-of"></div></div>
+      <div class="stat"><div class="stat-label">Days done</div><div class="stat-value" id="s-done"></div><div class="stat-sub">completed</div></div>
+      <div class="stat"><div class="stat-label">Days left</div><div class="stat-value" id="s-left"></div><div class="stat-sub">remaining</div></div>
+      <div class="stat"><div class="stat-label">Complete</div><div class="stat-value accent" id="s-pct"></div><div class="stat-sub">of the year</div></div>
+    </div>
+
+    <div class="section-title">Months</div>
+    <div class="months" id="months"></div>
+
+    <div class="section-title">Weeks</div>
+    <div class="weeks" id="weeks"></div>
+
+    <div class="quote-wrap">
+      <div class="quote-bar"></div>
+      <div>
+        <div class="quote-text" id="q-text"></div>
+        <div class="quote-author" id="q-author"></div>
+      </div>
+    </div>
+
+    <div class="footer" id="footer"></div>
+  </div>
+
+  <!-- Hourly card -->
+  <div class="hour-card">
+    <div class="hour-title">Today</div>
+    <div class="hour-date" id="h-date"></div>
+
+    <div class="arc-wrap">
+      <svg class="arc" width="140" height="80" viewBox="0 0 140 80">
+        <path d="M10,75 A60,60 0 0,1 130,75" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="10" stroke-linecap="round"/>
+        <path id="arc-fill" d="M10,75 A60,60 0 0,1 130,75" fill="none" stroke="url(#ag)" stroke-width="10" stroke-linecap="round" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+        <defs>
+          <linearGradient id="ag" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#4f8ef7"/>
+            <stop offset="100%" stop-color="#a78bfa"/>
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
+
+    <div class="hour-pct" id="h-pct"></div>
+    <div class="hour-sub">of today done</div>
+
+    <div class="hour-labels"><span>12am</span><span>12pm</span><span>11pm</span></div>
+    <div class="hour-grid" id="hgrid"></div>
+
+    <div class="hour-stats" id="hstats"></div>
+  </div>
+
+</div>
+
+<script>
+const QUOTES=[["The secret of getting ahead is getting started.","Mark Twain"],["It does not matter how slowly you go as long as you do not stop.","Confucius"],["You are never too old to set another goal or to dream a new dream.","C.S. Lewis"],["Believe you can and you're halfway there.","Theodore Roosevelt"],["Act as if what you do makes a difference. It does.","William James"],["Success is not final, failure is not fatal: it is the courage to continue that counts.","Winston Churchill"],["The only way to do great work is to love what you do.","Steve Jobs"],["In the middle of every difficulty lies opportunity.","Albert Einstein"],["It always seems impossible until it's done.","Nelson Mandela"],["Don't watch the clock; do what it does. Keep going.","Sam Levenson"],["Start where you are. Use what you have. Do what you can.","Arthur Ashe"],["The future belongs to those who believe in the beauty of their dreams.","Eleanor Roosevelt"],["You miss 100% of the shots you don't take.","Wayne Gretzky"],["Hard work beats talent when talent doesn't work hard.","Tim Notke"],["Dream big and dare to fail.","Norman Vaughan"],["Do something today that your future self will thank you for.","Sean Patrick Flanery"],["Little by little, one travels far.","J.R.R. Tolkien"],["The harder I work, the luckier I get.","Samuel Goldwyn"],["Push yourself, because no one else is going to do it for you.","Anonymous"],["Great things never come from comfort zones.","Anonymous"],["Discipline is the bridge between goals and accomplishment.","Jim Rohn"],["Don't stop when you're tired. Stop when you're done.","Anonymous"],["Success usually comes to those who are too busy to be looking for it.","Henry David Thoreau"],["Opportunities don't happen. You create them.","Chris Grosser"],["The only limit to our realization of tomorrow is our doubts of today.","Franklin D. Roosevelt"],["Energy and persistence conquer all things.","Benjamin Franklin"],["The way to get started is to quit talking and begin doing.","Walt Disney"],["If you're going through hell, keep going.","Winston Churchill"],["A year from now you may wish you had started today.","Karen Lamb"],["You don't have to be great to start, but you have to start to be great.","Zig Ziglar"],["Whether you think you can or think you can't, you're right.","Henry Ford"],["The only way out is through.","Robert Frost"],["Hardships often prepare ordinary people for an extraordinary destiny.","C.S. Lewis"],["Without hustle, talent will only carry you so far.","Gary Vaynerchuk"],["Don't limit your challenges. Challenge your limits.","Anonymous"],["It's not whether you get knocked down, it's whether you get up.","Vince Lombardi"],["Motivation is what gets you started. Habit is what keeps you going.","Jim Ryun"],["All progress takes place outside the comfort zone.","Michael John Bobak"],["You don't drown by falling in the water; you drown by staying there.","Ed Cole"],["The only place where success comes before work is in the dictionary.","Vidal Sassoon"],["Strive not to be a success, but rather to be of value.","Albert Einstein"],["I attribute my success to this: I never gave or took any excuse.","Florence Nightingale"],["Courage is resistance to fear, mastery of fear — not absence of fear.","Mark Twain"],["I have not failed. I've just found 10,000 ways that won't work.","Thomas A. Edison"],["The successful warrior is the average man, with laser-like focus.","Bruce Lee"],["Aim for the moon. If you miss, you may hit a star.","W. Clement Stone"],["Our greatest glory is not in never falling, but in rising every time we fall.","Confucius"],["Keep your eyes on the stars, and your feet on the ground.","Theodore Roosevelt"],["The difference between ordinary and extraordinary is that little extra.","Jimmy Johnson"],["Happiness is not something readymade. It comes from your own actions.","Dalai Lama"],["Learn as if you will live forever, live like you will die tomorrow.","Mahatma Gandhi"],["Perfection is not attainable, but if we chase perfection we can catch excellence.","Vince Lombardi"],["We must accept finite disappointment, but never lose infinite hope.","Martin Luther King Jr."],["Too many of us are not living our dreams because we are living our fears.","Les Brown"],["It is never too late to be what you might have been.","George Eliot"],["The most difficult thing is the decision to act; the rest is merely tenacity.","Amelia Earhart"],["Do not go where the path may lead, go instead where there is no path and leave a trail.","Ralph Waldo Emerson"],["If you want to lift yourself up, lift up someone else.","Booker T. Washington"],["Well done is better than well said.","Benjamin Franklin"],["Winning isn't everything, but wanting to win is.","Vince Lombardi"],["You become what you believe.","Oprah Winfrey"],["A person who never made a mistake never tried anything new.","Albert Einstein"],["There is no substitute for hard work.","Thomas Edison"],["Satisfaction lies in the effort, not in the attainment.","Mahatma Gandhi"],["Yesterday is history, tomorrow is a mystery, today is a gift.","Eleanor Roosevelt"]];
+
+const MS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MF=['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function isLeap(y){return(y%4===0&&y%100!==0)||y%400===0;}
+function dayOfYear(d){return Math.floor((d-new Date(d.getFullYear(),0,1))/86400000)+1;}
+
+function getDailyQuote(){
+  const n=new Date();
+  const seed=n.getFullYear()*10000+(n.getMonth()+1)*100+n.getDate();
+  return QUOTES[seed%QUOTES.length];
+}
+
+function fmt12(h){
+  if(h===0) return '12am';
+  if(h<12)  return h+'am';
+  if(h===12) return '12pm';
+  return (h-12)+'pm';
+}
+
+function updateHourly(now){
+  const h=now.getHours(), m=now.getMinutes();
+  const minDone=h*60+m;
+  const pct=((minDone/1440)*100).toFixed(1);
+  const hoursLeft=23-h, minsLeft=59-m;
+
+  document.getElementById('h-date').textContent=
+    MS[now.getMonth()]+' '+now.getDate()+', '+now.getFullYear();
+
+  // arc: semicircle total length ≈ π*60 = 188.5
+  const arcLen=188.5;
+  const offset=arcLen-(arcLen*(minDone/1440));
+  document.getElementById('arc-fill').setAttribute('stroke-dashoffset', offset.toFixed(2));
+
+  document.getElementById('h-pct').textContent=pct+'%';
+
+  // 24-hour grid
+  const grid=document.getElementById('hgrid');
+  grid.innerHTML='';
+  for(let i=0;i<24;i++){
+    const cell=document.createElement('div');
+    cell.className='hcell'+(i<h?' done':i===h?' now':'');
+    cell.title=fmt12(i);
+    grid.appendChild(cell);
+  }
+
+  // stats
+  document.getElementById('hstats').innerHTML=`
+    <div class="hstat"><span class="hstat-l">Current time</span><span class="hstat-v">${now.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></div>
+    <div class="hstat"><span class="hstat-l">Hours done</span><span class="hstat-v">${h}h ${m}m</span></div>
+    <div class="hstat"><span class="hstat-l">Hours left</span><span class="hstat-v">${hoursLeft}h ${minsLeft}m</span></div>
+    <div class="hstat"><span class="hstat-l">Minutes total</span><span class="hstat-v">${minDone} / 1440</span></div>
+  `;
+}
+
+function update(){
+  const now=new Date();
+  const y=now.getFullYear();
+  const total=isLeap(y)?366:365;
+  const doy=dayOfYear(now);
+  const pct=(doy/total*100).toFixed(1);
+  const left=total-doy;
+  const weekNum=Math.ceil(doy/7);
+  const totalWks=Math.ceil(total/7);
+  const curMonth=now.getMonth();
+
+  document.getElementById('yr').textContent=y;
+  document.getElementById('dateline').textContent=
+    MF[curMonth]+' '+now.getDate()+', '+y+
+    '  ·  '+now.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+
+  document.getElementById('bar').style.width=pct+'%';
+  document.getElementById('pct-label').textContent=pct+'% done';
+  document.getElementById('s-day').textContent=doy;
+  document.getElementById('s-of').textContent='of '+total+' days';
+  document.getElementById('s-done').textContent=doy-1;
+  document.getElementById('s-left').textContent=left;
+  document.getElementById('s-pct').textContent=pct+'%';
+
+  const mEl=document.getElementById('months');
+  mEl.innerHTML='';
+  for(let i=0;i<12;i++){
+    const d=document.createElement('div');
+    d.className='month'+(i<curMonth?' done':i===curMonth?' current':'');
+    d.textContent=MS[i];
+    mEl.appendChild(d);
+  }
+
+  const wEl=document.getElementById('weeks');
+  wEl.innerHTML='';
+  for(let i=1;i<=totalWks;i++){
+    const d=document.createElement('div');
+    d.className='week'+(i<weekNum?' done':i===weekNum?' current':'');
+    wEl.appendChild(d);
+  }
+
+  const[qt,qa]=getDailyQuote();
+  document.getElementById('q-text').textContent='\u201c'+qt+'\u201d';
+  document.getElementById('q-author').textContent='\u2014 '+qa;
+
+  document.getElementById('footer').textContent=
+    'Updates every minute  ·  Week '+weekNum+' of '+totalWks;
+
+  updateHourly(now);
+}
+
+// Starfield
+const canvas=document.getElementById('bg');
+const ctx=canvas.getContext('2d');
+let stars=[];
+function initStars(){
+  canvas.width=window.innerWidth; canvas.height=window.innerHeight;
+  stars=Array.from({length:140},()=>({x:Math.random()*canvas.width,y:Math.random()*canvas.height,r:Math.random()*1.2+0.3,a:Math.random()*0.6+0.1,sp:Math.random()*0.3+0.05}));
+}
+function drawStars(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  stars.forEach(s=>{ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fillStyle=`rgba(200,210,255,${s.a})`;ctx.fill();s.a+=s.sp*0.01;if(s.a>0.65||s.a<0.05)s.sp*=-1;});
+  requestAnimationFrame(drawStars);
+}
+window.addEventListener('resize',initStars);
+initStars(); drawStars();
+
+update();
+setInterval(update,60000);
+</script>
+</body>
+</html>
